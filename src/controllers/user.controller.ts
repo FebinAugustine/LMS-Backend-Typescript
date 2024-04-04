@@ -23,7 +23,11 @@ export const userRegistration = asyncHandler(
 
       const doesEmailExist = await userModel.findOne({ email });
       if (doesEmailExist) {
-        return new ApiErrors(400, "Email already exist");
+        return next(new ApiErrors(400, "Email already exist"));
+      }
+      const doesUserNameExist = await userModel.findOne({ userName });
+      if (doesUserNameExist) {
+        return next(new ApiErrors(400, "Username already exist"));
       }
 
       const user: IRegistrationBody = {
@@ -31,7 +35,6 @@ export const userRegistration = asyncHandler(
         email,
         password,
       };
-      console.log(user);
 
       const activationToken = createActivationToken(user);
       //   console.log(activationToken);
@@ -121,7 +124,6 @@ export const activateUser = asyncHandler(
       if (newUser.activationCode !== activation_code) {
         return next(new ApiErrors(400, "Invalid Activation Code"));
       }
-      console.log("reached 2");
 
       const { userName, email, password } = newUser.user;
       console.log(newUser.user);
@@ -131,8 +133,6 @@ export const activateUser = asyncHandler(
         email,
         password,
       });
-
-      console.log("reached 3");
 
       const newUserCreated = await userModel
         .findById(user._id)
@@ -154,6 +154,129 @@ export const activateUser = asyncHandler(
       return next(
         new ApiErrors(401, " Something went wrong while Verifing the code")
       );
+    }
+  }
+);
+
+/* GENERATE ACCESS AND REFRESH TOKEN */
+interface ITokenResponse {
+  accessToken: string;
+  refreshToken: string;
+}
+
+export const generateAccessRefreshToken = async (
+  userId: string
+): Promise<ITokenResponse> => {
+  try {
+    const user: User | null = await userModel.findById(userId);
+    if (!user) {
+      throw new ApiErrors(404, "User not found");
+    }
+
+    const accessToken = user.createAccessToken();
+    const refreshToken = user.createRefreshToken();
+
+    user.refreshToken = refreshToken;
+    await user.save({ validateBeforeSave: false });
+
+    return { accessToken, refreshToken };
+  } catch (error: any) {
+    throw new ApiErrors(
+      500,
+      "Something went wrong while creating access and refresh tokens"
+    );
+  }
+};
+
+/*USER LOGIN */
+interface ILoginRequest {
+  email: string;
+  password: string;
+}
+
+export const userLogin = asyncHandler(
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const { email, password } = req.body;
+
+      if (!email || !password) {
+        return new ApiErrors(401, "Email and Password are required");
+      }
+
+      /* find the user */
+      const user = await userModel.findOne({ email });
+
+      /* if not found */
+      if (!user) {
+        throw new ApiErrors(404, "User does not exist..!");
+      }
+
+      // password check
+      const isPasswordValid = await user.isPasswordCorrect(password);
+
+      if (!isPasswordValid) {
+        throw new ApiErrors(401, "Incorrect Password.");
+      }
+
+      // generate access and refresh token
+      const { accessToken, refreshToken } = await generateAccessRefreshToken(
+        user._id
+      );
+
+      const loggedInUser = await userModel
+        .findById(user._id)
+        .select("-password -refreshToken");
+
+      // send cookies
+      const options = {
+        httpOnly: true,
+        secure: true,
+      };
+
+      return res
+        .status(200)
+        .cookie("accessToken", accessToken, options)
+        .cookie("refreshToken", refreshToken, options)
+        .json(
+          new ApiResponse(
+            200,
+            { user: loggedInUser, accessToken, refreshToken },
+            "user Loggedin successfuly"
+          )
+        );
+    } catch (error) {
+      return new ApiErrors(401, "Login failed..!");
+    }
+  }
+);
+
+/*USER LOGOUT */
+export const logoutUser = asyncHandler(
+  async (req: Request, res: Response, next: NextFunction) => {
+    const userId = req.user?._id;
+    console.log(userId.toString());
+
+    try {
+      await userModel.findByIdAndUpdate(
+        userId,
+        {
+          $unset: { refreshToken: 1 },
+        },
+        { new: true }
+      );
+
+      const options = {
+        httpOnly: true,
+        secure: true,
+      };
+
+      res
+        .status(200)
+        .clearCookie("accessToken", options)
+        .clearCookie("refreshToken", options)
+        .json(new ApiResponse(200, {}, "User Loggedout"));
+    } catch (error: any) {
+      next(new ApiErrors(400, "Error while logging out"));
     }
   }
 );

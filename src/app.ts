@@ -3,7 +3,6 @@ import "dotenv/config";
 import cors from "cors";
 import cookieParser from "cookie-parser";
 import path from "path";
-import { error } from "console";
 
 const app = express();
 
@@ -24,11 +23,11 @@ app.use("/api/v1/users", userRouter);
 
 app.get("/home", (req, res, next) => {
   res.sendFile(path.join(__dirname, "views", "index.html"));
+  next();
 });
 
-// app.all("*", (req: Request, res: Response, next: NextFunction) => {
-//   res.sendFile(path.join(__dirname, "views", "404.html"));
-//   next(error);
-// });
+app.all("*", (req: Request, res: Response) => {
+  res.sendFile(path.join(__dirname, "views", "404.html"));
+});
 
 export { app };
